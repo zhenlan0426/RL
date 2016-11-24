@@ -98,7 +98,7 @@ class GBM(BaseEstimator, ClassifierMixin):
 #q_FA = qLearnWithFA(env1, 1000, GBM(DecisionTreeRegressor,100,0.1,{'max_depth':4,'splitter':'random','max_features':1},2))
 
 
-def qLearnWithFA2(env, episodes, estimator, transformer, discount=1.0, trials=1000 ,\
+def qLearnWithFA2(env, episodes, estimator_lst, transformer, discount=1.0, trials=1000 ,\
                  epsilon=0.2,randomTrials=10,sampleSize=1000):
     # always resample from env, instead of following the path so that we know the total size
     # of experience. Use TD(0) off-policy update and experience replay, where the "on-policy"
@@ -108,7 +108,6 @@ def qLearnWithFA2(env, episodes, estimator, transformer, discount=1.0, trials=10
     # this version uses partial_fit of SGDRegressor
     # transformer is a function that takes s as input, return a features of x to be used in later modeling
     A = env.action_space.n
-    estimator_lst = [estimator for i in range(A)]
     sDim = env.sDim # needs to implement this attribute in env
     aDim = env.aDim # needs to implement this attribute in env
     experience = np.zeros((episodes*trials,2*sDim+aDim+2)) # each dim corresponds to(s,a,r,s',done)
@@ -160,7 +159,7 @@ def qLearnWithFA2(env, episodes, estimator, transformer, discount=1.0, trials=10
     return estimator_lst
 
     
-def qLearnWithFA3(env, episodes, estimator, transformer, discount=1.0, trials=1000 ,\
+def qLearnWithFA3(env, episodes, estimator_lst, transformer, discount=1.0, trials=1000 ,\
                  epsilon=0.2,randomTrials=10,sampleSize=1000):
     # always resample from env, instead of following the path so that we know the total size
     # of experience. Use TD(0) off-policy update and experience replay, where the "on-policy"
@@ -170,7 +169,6 @@ def qLearnWithFA3(env, episodes, estimator, transformer, discount=1.0, trials=10
     # this version uses batch fit to get least square estimator directly. ##
     # transformer is a function that takes s as input, return a features of x to be used in later modeling
     A = env.action_space.n
-    estimator_lst = [estimator for i in range(A)]
     sDim = env.sDim # needs to implement this attribute in env
     aDim = env.aDim # needs to implement this attribute in env
     experience = np.zeros((episodes*trials,2*sDim+aDim+2)) # each dim corresponds to(s,a,r,s',done)
@@ -179,6 +177,7 @@ def qLearnWithFA3(env, episodes, estimator, transformer, discount=1.0, trials=10
     index_ = 0 # track number of experience
     for i in range(episodes):
         for j in range(trials): # "on-policy" exploration
+
             s=env.reset() # restart s each trial
             
             if i < randomTrials: # random sample at the begining              
@@ -223,29 +222,31 @@ def qLearnWithFA3(env, episodes, estimator, transformer, discount=1.0, trials=10
 
     
 ''''''''''''''''''''''''''''''''''''''   
-''' Test qLearnWithFA2 on Blackjack '''
+''' Test qLearnWithFA2&3 on Blackjack '''
 ''''''''''''''''''''''''''''''''''''''
 
-#env1 = BlackjackEnv()
-#estimator = SGDRegressor(learning_rate='constant')
-#estimator3 = LinearRegression()
-#
-#''' prepare transformer '''
-#observation_examples = np.array([env1.observation_space.sample() for x in range(10000)])
-#scaler = sklearn.preprocessing.StandardScaler()
-#scaler.fit(observation_examples)
-#
-#featurizer = sklearn.pipeline.FeatureUnion([
-#        ("rbf1", RBFSampler(gamma=5.0, n_components=100)),
-#        ("rbf2", RBFSampler(gamma=2.0, n_components=100)),
-#        ("rbf3", RBFSampler(gamma=1.0, n_components=100)),
-#        ("rbf4", RBFSampler(gamma=0.5, n_components=100))
-#        ])
-#featurizer.fit(scaler.transform(observation_examples))
-#transformer = lambda x: featurizer.transform(scaler.transform(x))
-#
-#q2 = qLearnWithFA2(env1, 1000, estimator, transformer, discount=1.0, trials=1000 ,\
-#                 epsilon=0.2,randomTrials=10,sampleSize=1000)
-#
-#q3 = qLearnWithFA3(env1, 1000, estimator3, transformer, discount=1.0, trials=1000 ,\
-#                 epsilon=0.2,randomTrials=10,sampleSize=1000)
+env1 = BlackjackEnv()
+estimator_lst2 = [SGDRegressor(learning_rate='constant') for i in range(env1.aDim+1)]
+estimator_lst3 = [LinearRegression() for i in range(env1.aDim+1)]
+
+''' prepare transformer '''
+observation_examples = np.array([env1.observation_space.sample() for x in range(10000)])
+scaler = sklearn.preprocessing.StandardScaler()
+scaler.fit(observation_examples)
+
+featurizer = sklearn.pipeline.FeatureUnion([
+        ("rbf1", RBFSampler(gamma=5.0, n_components=100)),
+        ("rbf2", RBFSampler(gamma=2.0, n_components=100)),
+        ("rbf3", RBFSampler(gamma=1.0, n_components=100)),
+        ("rbf4", RBFSampler(gamma=0.5, n_components=100))
+        ])
+featurizer.fit(scaler.transform(observation_examples))
+transformer = lambda x: featurizer.transform(scaler.transform(x))
+
+q2 = qLearnWithFA2(env1, 1000, estimator, transformer, discount=1.0, trials=1000 ,\
+                 epsilon=0.2,randomTrials=10,sampleSize=1000)
+
+q3 = qLearnWithFA3(env1, 1000, [LinearRegression() for i in range(env1.aDim+1)], transformer, discount=1.0, trials=1000 ,\
+                 epsilon=0.2,randomTrials=10,sampleSize=1000)
+
+
