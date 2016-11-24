@@ -243,10 +243,8 @@ featurizer = sklearn.pipeline.FeatureUnion([
 featurizer.fit(scaler.transform(observation_examples))
 transformer = lambda x: featurizer.transform(scaler.transform(x))
 
-q2 = qLearnWithFA2(env1, 1000, estimator, transformer, discount=1.0, trials=1000 ,\
+q2 = qLearnWithFA2(env1, 1000, estimator_lst2, transformer, discount=1.0, trials=1000 ,\
                  epsilon=0.2,randomTrials=10,sampleSize=1000)
 
-q3 = qLearnWithFA3(env1, 1000, [LinearRegression() for i in range(env1.aDim+1)], transformer, discount=1.0, trials=1000 ,\
+q3 = qLearnWithFA3(env1, 1000, estimator_lst3, transformer, discount=1.0, trials=1000 ,\
                  epsilon=0.2,randomTrials=10,sampleSize=1000)
-
-
