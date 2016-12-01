@@ -357,3 +357,113 @@ def qLearnWithFA4(env, transformer, transformD,\
 #        count_+=1
 #
 #q4_act = FA4_predict(X,transformer,q4).reshape(17,-1)
+
+
+def qLearnWithFA5(env, estimator_lst,M_est,\
+                  discount=1.0, sampleSize=100000, iterTime=20,iterErr=1e-5):
+    # differ from version 3 in that, FA5 samples uniform randomly (s,a,s',r,done) once 
+    # and then do batch policy iteration over this fixed "dataset" via a generic estimator_list
+    # where estimator needs to support fit and predict method.
+    
+    from copy import deepcopy as copy
+    A = env.action_space.n
+    sDim = env.sDim # needs to implement this attribute in env
+    aDim = env.aDim # needs to implement this attribute in env
+    experience = np.zeros((sampleSize,2*sDim+aDim+2)) # each dim corresponds to(s,a,r,s',done)
+    
+
+    for i in range(sampleSize): # sample experience
+
+        s=env.reset() 
+        a = env.action_space.sample() 
+        s_next, r, done, _ = env.step(a)
+
+        experience[i,:sDim]=s
+        experience[i,sDim:sDim+aDim]=a
+        experience[i,sDim+aDim]=r
+        experience[i,sDim+aDim+1:sDim+aDim+1+sDim]=s_next
+        experience[i,sDim+aDim+1+sDim]=done                    
+
+
+    S,S_next,R,Done,target,yhat = [],[],[],[],[],[]
+    for i in range(A): 
+        index_i = experience[:,sDim]==i
+        S.append(experience[index_i,:sDim])
+        R.append(experience[index_i,sDim+aDim])
+        S_next.append(experience[index_i,sDim+aDim+1:sDim+aDim+1+sDim])
+        Done.append(experience[index_i,sDim+aDim+1+sDim])
+        target.append(np.zeros((index_i.sum(),A)))
+        yhat.append(np.zeros(index_i.sum()))
+    
+    target_old = copy(target)
+    for i in range(iterTime):
+        semi_obj,obj = 0,0
+        for j in np.random.permutation(A):
+            yhat[j] = estimator_lst[j].fit(S[j],R[j]\
+                                    +discount*np.where(Done[j],.0,\
+                                      np.max(target[j],1)),\
+                                      None if i==0 else yhat[j])
+            
+            semi_obj+=np.sum(np.abs(yhat[j]-R[j]\
+                            +discount*np.where(Done[j],.0,\
+                              np.max(target[j],1))))
+            
+            for a_ in range(A): # update target after each fit
+                target[a_][:,j] += estimator_lst[j].predict(S_next[a_],i*M_est)
+        
+            obj+=np.sum(np.abs(yhat[j]-R[j]\
+                            +discount*np.where(Done[j],.0,\
+                              np.max(target[j],1))))
+        
+        print "semi_obj is {} and obj is {}".format(semi_obj/sampleSize/A,obj/sampleSize/A)
+        if np.sum([np.sum(np.abs(new_-old_)) for \
+                   new_,old_ in zip(target,target_old)])/sampleSize/A < iterErr:
+            print "finished after {}-iterations".format(i)
+            return estimator_lst
+        else:
+            target_old = copy(target)
+            
+    print "needs to increase iterations"
+    return estimator_lst
+
+class GBM(BaseEstimator, ClassifierMixin):
+    def __init__(self,BaseEst,M_est,learnRate,alpha,BasePara,subFold):
+        self.BaseEst=BaseEst
+        self.M_est=M_est
+        self.learnRate=learnRate
+        self.estimator_=[]
+        self.alpha=alpha
+        self.BasePara=BasePara
+        self.subFold=subFold
+        
+
+    # plain fitting     
+    def fit(self,X,y,yhat=None):
+        
+        n=y.shape[0]
+        if yhat is None:
+            self.estimator_=[]
+            self.init_=np.median(y,0)
+            yhat = self.init_*np.ones_like(y)
+
+        kf = KFold(n, n_folds=self.subFold)
+        for i in range(self.M_est):
+            #pdb.set_trace()
+            index=np.random.permutation(n) # shuffle index for subsampling
+            X,y,yhat = X[index,:],y[index],yhat[index]
+            for _,test in kf:
+                error=y[test]-yhat[test]
+                a=np.percentile(error,self.alpha)
+                target=np.where(np.abs(error)<=a,error,a*np.sign(error))
+                self.estimator_.append(self.BaseEst(**self.BasePara).fit(X[test],target))
+                yhat+=self.learnRate*self.estimator_[-1].predict(X)
+        return yhat  
+          
+    def predict(self,X,start=0):
+        if start==0:
+            yhat=self.init_
+        else:
+            yhat=.0
+        for clf in self.estimator_[start:]:
+            yhat= yhat + self.learnRate*clf.predict(X)
+        return yhat
