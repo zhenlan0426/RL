@@ -359,7 +359,7 @@ def qLearnWithFA4(env, transformer, transformD,\
 #q4_act = FA4_predict(X,transformer,q4).reshape(17,-1)
 
 
-def qLearnWithFA5(env, estimator_lst,M_est,\
+def qLearnWithFA5(env, estimator_lst,\
                   discount=1.0, sampleSize=100000, iterTime=20,iterErr=1e-5):
     # differ from version 3 in that, FA5 samples uniform randomly (s,a,s',r,done) once 
     # and then do batch policy iteration over this fixed "dataset" via a generic estimator_list
@@ -370,7 +370,7 @@ def qLearnWithFA5(env, estimator_lst,M_est,\
     sDim = env.sDim # needs to implement this attribute in env
     aDim = env.aDim # needs to implement this attribute in env
     experience = np.zeros((sampleSize,2*sDim+aDim+2)) # each dim corresponds to(s,a,r,s',done)
-    
+    M_est = estimator_lst[0].M_est * estimator_lst[0].subFold
 
     for i in range(sampleSize): # sample experience
 
@@ -405,14 +405,14 @@ def qLearnWithFA5(env, estimator_lst,M_est,\
                                       None if i==0 else yhat[j])
             
             semi_obj+=np.sum(np.abs(yhat[j]-R[j]\
-                            +discount*np.where(Done[j],.0,\
+                            -discount*np.where(Done[j],.0,\
                               np.max(target[j],1))))
             
             for a_ in range(A): # update target after each fit
                 target[a_][:,j] += estimator_lst[j].predict(S_next[a_],i*M_est)
         
             obj+=np.sum(np.abs(yhat[j]-R[j]\
-                            +discount*np.where(Done[j],.0,\
+                            -discount*np.where(Done[j],.0,\
                               np.max(target[j],1))))
         
         print "semi_obj is {} and obj is {}".format(semi_obj/sampleSize/A,obj/sampleSize/A)
@@ -440,6 +440,11 @@ class GBM(BaseEstimator, ClassifierMixin):
     # plain fitting     
     def fit(self,X,y,yhat=None):
         
+        def invert_permutation(p):
+            s = np.zeros(p.size, p.dtype)
+            s[p] = xrange(p.size) 
+            return s
+    
         n=y.shape[0]
         if yhat is None:
             self.estimator_=[]
@@ -447,17 +452,19 @@ class GBM(BaseEstimator, ClassifierMixin):
             yhat = self.init_*np.ones_like(y)
 
         kf = KFold(n, n_folds=self.subFold)
+        index_invert = np.arange(n)
+        
         for i in range(self.M_est):
             #pdb.set_trace()
             index=np.random.permutation(n) # shuffle index for subsampling
-            X,y,yhat = X[index,:],y[index],yhat[index]
+            X,y,yhat,index_invert = X[index,:],y[index],yhat[index],index_invert[index]
             for _,test in kf:
                 error=y[test]-yhat[test]
                 a=np.percentile(error,self.alpha)
                 target=np.where(np.abs(error)<=a,error,a*np.sign(error))
                 self.estimator_.append(self.BaseEst(**self.BasePara).fit(X[test],target))
                 yhat+=self.learnRate*self.estimator_[-1].predict(X)
-        return yhat  
+        return yhat[invert_permutation(index_invert)]  
           
     def predict(self,X,start=0):
         if start==0:
