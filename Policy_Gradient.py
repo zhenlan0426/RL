@@ -1,84 +1,130 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue May 03 21:32:43 2016
+      
+import numpy as np 
+import gym
+import sklearn.pipeline
+from sklearn.kernel_approximation import RBFSampler
+from sklearn.decomposition import PCA
 
-@author: zhenlanwang
-"""
 
-from sklearn.base import BaseEstimator, ClassifierMixin
-import numpy as np
 
-class Bagging_KClass(BaseEstimator, ClassifierMixin):
-        
-    def __init__(self,BaseEst,M_est,FixedPara,subSample,subFeature,RandomInit):
-        # RandomInit is a string that randomly initiate the base para. 
-        # to be called by exec(). the name within should be consistent with the ones
-        # used in BasePara
-        self.BaseEst=BaseEst
-        self.M_est=M_est
-        self.estimator_=[]
-        self.FixedPara=FixedPara
-        self.subSample=subSample
-        self.subFeature=subFeature
-        self.subFeatureIndex=[]
-        self.RandomInit=RandomInit
-        self.Likelihood=[]
-        
-    def fit(self,X,y):
-        n , d = X.shape
-        n_sample , d_sample = int(n*self.subSample), int(d*self.subFeature)
-        n_test = n-n_sample
-        k = len(np.unique(y))
 
-        for i in range(self.M_est):
-            # sampling
-            IndexSample=np.random.permutation(n) 
-            IndexFeature=np.random.permutation(d) 
-            y_model=y[IndexSample[:n_sample]]
-            X_model=X[IndexSample[:n_sample],:][:,IndexFeature[:d_sample]]
-            y_test=y[IndexSample[n_sample:]]
-            X_test=X[IndexSample[n_sample:],:][:,IndexFeature[:d_sample]]
-            self.subFeatureIndex.append(IndexFeature[:d_sample])
-            
-            # estimation
-            exec(self.RandomInit) 
-            self.estimator_.append(self.BaseEst(**self.BasePara).fit(X_model,y_model))            
-
-            # OOB fit
-            yp=self.estimator_[-1].predict_proba(X_test)*k/2 #k/2 is here to prevent underflow
-            target=yp[np.arange(n_test),y_test]            
-            self.Likelihood.append(np.prod(np.where(target==0,0.01,target))) # floor. otherwise likelihood will be zero
-        
+class Policy():
+    # pi(a|s) follows a normal distribution, with mean transformer(s)*weight,
+    # and variance sigma. 
+    
+    def __init__(self,d):
+        # transformer is a function that creates features out of state
+        # it should include a column of one as intercept
+        # sigma is the std of the normal distribution and r is learning rate
+        # parameter moved to fit method to allow for more flexible decay
+        self.d = d
+        self.weight = np.random.randn(d)/np.sqrt(d)
+    
+    def predict(self,s_transf):
+        # s should be np.array of the shape (N,d0)
+        return np.dot(s_transf,self.weight)
+    
+    def predict_sample(self,s_transf,sigma):
+        # sigma_factor could be used to decay sigma
+        return np.random.randn(s_transf.shape[0])*sigma + self.predict(s_transf)
+    
+    def partial_fit(self,s_transf,a,td_err,discount,r,sigma):
+        # the first dim of s_transf, a, and td_err is N, # of sample
+        # in order to do a mini-batch update
+        self.weight += r/sigma**2 * np.mean((a-np.dot(s_transf,self.weight)).reshape(-1,1)*\
+                                      discount.reshape(-1,1)*\
+                                      td_err.reshape(-1,1)*s_transf,0)
         return self
+
+    
+class Value():
+    # estimate value function as transformer(s)*weight
+    
+    def __init__(self,d):
+        # transformer is a function that creates features out of state
+        # it should include a column of one as intercept
+        # sigma is the std of the normal distribution and r is learning rate
+        # parameter moved to fit method to allow for more flexible decay
+        self.d = d
+        #self.weight = np.random.randn(d)/np.sqrt(d)
+        self.weight = np.zeros(d)
         
+    def predict(self,s_transf):
+        # s should be np.array of the shape (N,d0)
+        return np.dot(s_transf,self.weight)
+    
+    def partial_fit(self,s_transf,td_err,r):
+        # the first dim of s_transf, a, and td_err is N, # of sample
+        self.weight += r * np.mean(td_err.reshape(-1,1)*s_transf,0)
+        return self    
+
+class EnvList():
+    
+    def __init__(self, n, EnvList_,d_raw):
+        # d_raw is the dim of state before transformer
+        # EnvList_ should be like [envMake for i in range(n)]
+        self.EnvList_ = EnvList_
+        self.n = n
+        self.d = d_raw
         
-    def predict_proba(self,X):
-        w=np.array(self.Likelihood)
-        w=w/np.sum(w)
-        yp=w[0]*self.estimator_[0].predict_proba(X[:,self.subFeatureIndex[0]])        
+    def step(self,a):
+        S_next,R,Done = np.zeros((self.n,self.d)),np.zeros(self.n),np.zeros(self.n)
+        for i in range(self.n):
+            S_next[i], R[i], Done[i], _ = self.EnvList_[i].step(a[i])
+            if Done[i]: # reset terminal state
+                self.EnvList_[i].reset()
         
-        for i in range(1,self.M_est):
-            yp+=w[i]*self.estimator_[i].predict_proba(X[:,self.subFeatureIndex[i]])
+        return S_next,R,Done
+    
+    def currentState(self):
+        return np.array([env.state for env in self.EnvList_])
+
+def ActorCritic(policy_,value_,transformer,envList_,iterTimes,learnR,sigma,discount,n):  
+    discount_vec = np.zeros(n)
+    for i in range(iterTimes):
+        s_transf = transformer(envList_.currentState())
+        action = policy_.predict_sample(s_transf,sigma)
+        s_next,r,done = envList_.step(action.reshape(-1,1))
+        td_err = discount*np.where(done,.0,value_.predict(transformer(s_next))) + \
+                                   r - value_.predict(s_transf)
+        value_.partial_fit(s_transf,td_err,learnR)
+        policy_.partial_fit(s_transf,action,td_err,discount_vec,learnR,sigma)
+        discount_vec = np.where(done, 1.0, discount_vec*discount)
         
-        return yp
-        
-    def predict(self,X):
-        w=np.array(self.Likelihood)
-        w=w/np.sum(w)
-        yp=w[0]*self.estimator_[0].predict_proba(X[:,self.subFeatureIndex[0]])        
-        
-        for i in range(1,self.M_est):
-            yp+=w[i]*self.estimator_[i].predict_proba(X[:,self.subFeatureIndex[i]])
-        
-        return np.argmax(yp,1)
-            
-''' tested on knn bagging. does not work well as the "best" para for knn has order of magnitude            
-higher likelihood. As a result, the weight is so dominant by the "best" para that the ensemble
-essentially equal to the "best" para """
-            
-            
-            
-            
-            
-            
-            
+    return policy_,value_
+    
+    
+    
+    
+    
+'''''''''''''''''''''''''''''''''''''''''''''''   
+'''''' Test on MountainCarContinuous-v0''''''
+'''''''''''''''''''''''''''''''''''''''''''''''    
+env1 = gym.envs.make("MountainCarContinuous-v0")
+iterTimes = 10000
+r = 1e-2
+sigma = 1
+discount =1
+n = 100
+
+observation_examples = np.array([env1.observation_space.sample() for x in range(100000)])    
+featurizer = sklearn.pipeline.FeatureUnion([
+        ("rbf0", RBFSampler(gamma=8.0, n_components=50)),                                        
+        ("rbf1", RBFSampler(gamma=4.0, n_components=50)),
+        ("rbf2", RBFSampler(gamma=2.0, n_components=50)),
+        ("rbf3", RBFSampler(gamma=1.0, n_components=50)),
+        ("rbf4", RBFSampler(gamma=0.5, n_components=50))
+        ])    
+pca = PCA(n_components=0.99,whiten=True)        
+pca.fit(featurizer.fit_transform(observation_examples))
+d = pca.n_components_ + 1 # extra one for intercept
+
+transformer = lambda x: np.c_[np.ones(x.shape[0]),\
+                                  pca.transform(featurizer.transform(x))]
+
+envList_ = EnvList(n,[gym.envs.make("MountainCarContinuous-v0") for i in range(n)],2)
+policy_ = Policy(d)
+value_ = Value(d)
+
+policy_,value_ = ActorCritic(policy_,value_,transformer,envList_,iterTimes,r,sigma,discount,n)
