@@ -5,8 +5,8 @@ import gym
 import sklearn.pipeline
 from sklearn.kernel_approximation import RBFSampler
 from sklearn.decomposition import PCA
-
-
+import  matplotlib.pyplot as plt
+from sklearn.utils.extmath import cartesian
 
 
 class Policy():
@@ -69,12 +69,12 @@ class EnvList():
         self.d = d_raw
         
     def step(self,a):
-        S_next,R,Done = np.zeros((self.n,self.d)),np.zeros(self.n),np.zeros(self.n)
+        S_next,R,Done = np.zeros((self.n,self.d)),np.zeros(self.n),np.zeros(self.n,dtype=bool)
         for i in range(self.n):
             S_next[i], R[i], Done[i], _ = self.EnvList_[i].step(a[i])
             if Done[i]: # reset terminal state
                 self.EnvList_[i].reset()
-        
+                self.EnvList_[i].state = self.EnvList_[i].observation_space.sample()
         return S_next,R,Done
     
     def currentState(self):
@@ -82,6 +82,9 @@ class EnvList():
 
 def ActorCritic(policy_,value_,transformer,envList_,iterTimes,learnR,sigma,discount,n):  
     discount_vec = np.zeros(n)
+    cumR = 0
+    monitorFreq = 1000
+    
     for i in range(iterTimes):
         s_transf = transformer(envList_.currentState())
         action = policy_.predict_sample(s_transf,sigma)
@@ -91,30 +94,70 @@ def ActorCritic(policy_,value_,transformer,envList_,iterTimes,learnR,sigma,disco
         value_.partial_fit(s_transf,td_err,learnR)
         policy_.partial_fit(s_transf,action,td_err,discount_vec,learnR,sigma)
         discount_vec = np.where(done, 1.0, discount_vec*discount)
-        
+        cumR += np.sum(r)
+        if i%monitorFreq == 0:
+            print "iteration {} with cumulative reward {}".format(i,cumR/monitorFreq/n)
+            cumR = 0
     return policy_,value_
     
     
+def mc_eval(env, episodes, policy, discount=1.0):
+    # eval expected value over both s and a
+    # policy is a fun maps from s to a
+    val = 0
+    for i in range(episodes):
+        s=env.reset()
+        done = False
+        factor = 1 # discount
+        while not done:         
+            s, r, done, _ = env.step(policy(s))
+            val += factor*r
+            factor *= discount
+    return val/episodes     
     
     
+def mc_eval_batch(envList, episodes, policy, discount=1.0):
+    # same as mc_eval, but does it in batch for speed
+    # seems to give biased estimate due to algo favors 
+    # batch the finish fast
+    val = 0
+    count = 0 
+    n = envList.n
+    cumR = np.zeros(n)
+    factor = np.ones_like(n)
+    
+    while count<episodes:
+        s = envList.currentState()
+        s, r, done = envList.step(policy(s))
+        cumR += factor*r
+        factor = np.where(done,1.0,factor*discount)
+        val += np.sum(np.where(done,cumR,.0))
+        count += np.sum(done)
+        cumR[done] = .0
+
+        
+    return val/count        
     
 '''''''''''''''''''''''''''''''''''''''''''''''   
 '''''' Test on MountainCarContinuous-v0''''''
 '''''''''''''''''''''''''''''''''''''''''''''''    
+
+# performance depends on r, sigma, n used 
 env1 = gym.envs.make("MountainCarContinuous-v0")
 iterTimes = 10000
-r = 1e-2
-sigma = 1
+r = 1e-4 # 1e-4 is the result of tuning
+sigma = 0.1
 discount =1
-n = 100
+n = 1000
 
 observation_examples = np.array([env1.observation_space.sample() for x in range(100000)])    
 featurizer = sklearn.pipeline.FeatureUnion([
-        ("rbf0", RBFSampler(gamma=8.0, n_components=50)),                                        
-        ("rbf1", RBFSampler(gamma=4.0, n_components=50)),
-        ("rbf2", RBFSampler(gamma=2.0, n_components=50)),
-        ("rbf3", RBFSampler(gamma=1.0, n_components=50)),
-        ("rbf4", RBFSampler(gamma=0.5, n_components=50))
+        ("rbf0", RBFSampler(gamma=8.0, n_components=25)),                                        
+        ("rbf1", RBFSampler(gamma=4.0, n_components=25)),
+        ("rbf2", RBFSampler(gamma=2.0, n_components=25)),
+        ("rbf3", RBFSampler(gamma=1.0, n_components=25)),
+        ("rbf4", RBFSampler(gamma=0.5, n_components=25)),
+        ("rbf5", RBFSampler(gamma=0.25, n_components=25))
         ])    
 pca = PCA(n_components=0.99,whiten=True)        
 pca.fit(featurizer.fit_transform(observation_examples))
@@ -128,3 +171,36 @@ policy_ = Policy(d)
 value_ = Value(d)
 
 policy_,value_ = ActorCritic(policy_,value_,transformer,envList_,iterTimes,r,sigma,discount,n)
+
+mc_eval(env1, 10, lambda x:policy_.predict(transformer(x.reshape(1,-1))), discount=1.0)
+
+#mc_eval_batch(EnvList(n,[gym.envs.make("MountainCarContinuous-v0") for i in range(n)],2),\
+#               1000, lambda x:policy_.predict(transformer(x)).reshape(-1,1), discount=1.0)
+
+
+x = cartesian([np.linspace(-1,0.6,100),np.linspace(-0.07,0.07,100)])
+policy_x = policy_.predict(transformer(x))
+value_x = value_.predict(transformer(x))
+
+CS3 = plt.imshow(value_x.reshape(100,100))
+plt.colorbar(CS3)
+plt.show()
+CS3 = plt.imshow(policy_x.reshape(100,100))
+plt.colorbar(CS3)
+
+
+''' render final policy '''
+done = False
+env1.reset()
+policy = lambda x:policy_.predict(transformer(x.reshape(1,-1)))
+while not done:
+    env1.render(mode='human')
+    _,_,done,_= env1.step(policy(env1.state))
+env1.close()
+
+
+
+
+
+
+
