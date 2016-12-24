@@ -23,7 +23,19 @@ switchModel = 0.2 # control how freq each model get updated
 
 # End of Build Computation Graph
 
+def rgb2grey(img):
+    # last dim is channel
+    return 0.2125*img[...,0] + 0.7154*img[...,1] + 0.0721*img[...,2]
 
+def insert_delete(old, new,first_dim):
+    # only support insert_delete in the first or the last dim
+    # of the tensor
+    n = new.shape[0]
+    if first_dim:
+        return np.append(old[n:],new,0)
+    else:
+        return np.append(old[...,n:],new,-1)
+    
 # 1.0 init sampling 
 S_tot = np.zeros((DataSize,L,W,lookback))
 S_next_tot = np.zeros((DataSize,L,W,lookback))
