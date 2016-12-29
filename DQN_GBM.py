@@ -111,7 +111,7 @@ modelList = [GBM(DecisionTreeRegressor,NbaseLearner,\
             learning_rate,{'max_depth':depth,'splitter':'random','max_features':max_features},subfold),\
             GBM(DecisionTreeRegressor,NbaseLearner,\
             learning_rate,{'max_depth':depth,'splitter':'random','max_features':max_features},subfold) ]
-                
+# TODO add other model class to modelList                
                 
 # 1.0 init sampling 
 S_tot = np.zeros((DataSize,featureNumber),dtype=np.int32)
