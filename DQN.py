@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Created on Sat Dec 24 08:28:05 2016
-
+http://cbonnett.github.io/MDN.html
 @author: will
 """
 import numpy as np
