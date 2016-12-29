@@ -1,11 +1,3 @@
-#!/usr/bin/env python2
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Dec 28 17:19:37 2016
-
-@author: will
-"""
-
 from sklearn.base import BaseEstimator, ClassifierMixin
 import numpy as np
 from sklearn.cross_validation import KFold
@@ -38,8 +30,8 @@ trainIterTime = 2
 featureNumber = L*W*lookback
 featureLowCutoff = 100
 featureHighCutoff = DataSize - featureLowCutoff
-
-
+modelNum = 5
+modelMax = 2
                  
 
 
@@ -107,10 +99,13 @@ def copyGBM(model1,model2):
     model2.estimator_ = deepcopy(model1.estimator_)
     model2.init_ = deepcopy(model1.init_)
     
-modelList = [GBM(DecisionTreeRegressor,NbaseLearner,\
-            learning_rate,{'max_depth':depth,'splitter':'random','max_features':max_features},subfold),\
+modelList = [GBM(DecisionTreeRegressor,NbaseLearner*2,\
+            learning_rate,{'max_depth':int(depth*1.5),'splitter':'random','max_features':max_features/1.5},subfold/2),\
+            GBM(DecisionTreeRegressor,NbaseLearner/2,\
+            learning_rate,{'max_depth':int(depth/1.5),'splitter':'random','max_features':max_features*1.5},subfold*2),\
             GBM(DecisionTreeRegressor,NbaseLearner,\
-            learning_rate,{'max_depth':depth,'splitter':'random','max_features':max_features},subfold) ]
+            learning_rate,{'max_depth':depth,'splitter':'random','max_features':max_features},subfold),\
+            ]
 # TODO add other model class to modelList                
                 
 # 1.0 init sampling 
@@ -147,12 +142,14 @@ while counter < DataSize: # do not update S_next_tot due to MC-training
 # entire Dataset once. 
 # train_op is a list of Graph node for SGD-update, one for each model
 temp = np.sum(S_tot==0,0)
-featureIndex = [(temp>featureLowCutoff) * (temp<featureHighCutoff)]*2
-modelList[0].fit(S_tot[:,featureIndex[0]],R_tot,A_tot) 
-copyGBM(modelList[0],modelList[1])
+featureIndex = [(temp>featureLowCutoff) * (temp<featureHighCutoff)]*modelNum
+index = np.random.permutation(DataSize)
+tempBatch = int(DataSize/modelNum)
+for i in range(modelNum):
+    modelList[i].fit(S_tot[index[i*tempBatch:(i+1)*tempBatch]][:,featureIndex[i]],R_tot,A_tot) 
 
-modelList[0].subFold = 2
-modelList[1].subFold = 2
+
+
 
 # Main loop    
 S = np.zeros((sampleSize,featureNumber),dtype=np.int32)
@@ -170,7 +167,7 @@ for iter_ in range(iter_times):
         if done == True:
             s = np.tile(processImg(env.reset()), lookback)
 
-        a = np.argmax(modelList[0].predict(np.expand_dims(s[featureIndex[0]],0))) \
+        a = np.argmax(modelList[np.random.randint(modelNum)].predict(np.expand_dims(s[featureIndex[0]],0))) \
                 if np.random.rand() > eps[iter_] else np.random.randint(k) 
         s_next, r, done, _ = env.step(a)
 
@@ -196,14 +193,18 @@ for iter_ in range(iter_times):
     index = np.random.permutation(DataSize) 
     for i in range(trainIterTime): 
         batchIndex = index[i*batchSize:(i+1)*batchSize]
-        target = R_tot[batchIndex] + np.where(Done_tot[batchIndex],.0,\
-                    modelList[0].predict(S_next_tot[batchIndex][:,featureIndex[0]])\
-                    [range(batchSize),np.argmax(modelList[1].predict(S_next_tot[batchIndex][:,featureIndex[1]]),1)])
+        s_next_ = S_next_tot[batchIndex][~Done_tot[batchIndex]] # predict only when done = False
+        targetMax = np.argmax(np.sum([model.predict(s_next_[:,ind_]) for model,ind_ in \
+                                                          zip(modelList[:modelMax],featureIndex[:modelMax])],0),1)
+        targetVal = np.mean([model.predict(s_next_[:,ind_]) for model,ind_ in \
+                                                          zip(modelList[modelMax:],featureIndex[modelMax:])],0)
+        NextVal = np.zeros(batchSize,dtype=np.float32)
+        NextVal[~Done_tot[batchIndex]] = targetVal[range(targetMax.shape[0]),targetMax]
+        target = R_tot[batchIndex] + discount * NextVal
         
-        updateModel = np.random.randint(2)
+        updateModel = np.random.randint(modelNum)
         temp = np.sum(S_tot[batchIndex]==0,0)
         featureIndex[updateModel] = (temp>featureLowCutoff) * (temp<featureHighCutoff)
-        
         modelList[updateModel].fit(S_tot[batchIndex][:,featureIndex[updateModel]],target,A_tot[batchIndex]) 
 
     # 2.2 End of Training
