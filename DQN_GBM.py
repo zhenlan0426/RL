@@ -207,8 +207,8 @@ for iter_ in range(iter_times):
         temp = np.sum(S_tot[batchIndex]==0,0)
         temp = (temp>featureLowCutoff) * (temp<featureHighCutoff)
         for model_i in updateModel:
-          featureIndex[model_i] = temp
-          modelList[model_i].fit(S_tot[batchIndex][:,featureIndex[model_i]],target,A_tot[batchIndex]) 
+            featureIndex[model_i] = temp
+            modelList[model_i].fit(S_tot[batchIndex][:,featureIndex[model_i]],target,A_tot[batchIndex])
 
     # 2.2 End of Training
     
