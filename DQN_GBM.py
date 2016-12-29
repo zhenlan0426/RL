@@ -30,9 +30,10 @@ trainIterTime = 2
 featureNumber = L*W*lookback
 featureLowCutoff = 100
 featureHighCutoff = DataSize - featureLowCutoff
-modelNum = 5
-modelMax = 2
-                 
+
+modelNum = 5 # total number of model in modelList
+modelMax = 2 # first modelMax of model in List will be used to figure out the argmax, i.e. best action
+modelUpdateNum = 2 # how many model to update each time                
 
 
 
@@ -202,10 +203,12 @@ for iter_ in range(iter_times):
         NextVal[~Done_tot[batchIndex]] = targetVal[range(targetMax.shape[0]),targetMax]
         target = R_tot[batchIndex] + discount * NextVal
         
-        updateModel = np.random.randint(modelNum)
+        updateModel = np.random.permutation(modelNum)[:modelUpdateNum]
         temp = np.sum(S_tot[batchIndex]==0,0)
-        featureIndex[updateModel] = (temp>featureLowCutoff) * (temp<featureHighCutoff)
-        modelList[updateModel].fit(S_tot[batchIndex][:,featureIndex[updateModel]],target,A_tot[batchIndex]) 
+        temp = (temp>featureLowCutoff) * (temp<featureHighCutoff)
+        for model_i in updateModel:
+          featureIndex[model_i] = temp
+          modelList[model_i].fit(S_tot[batchIndex][:,featureIndex[model_i]],target,A_tot[batchIndex]) 
 
     # 2.2 End of Training
     
