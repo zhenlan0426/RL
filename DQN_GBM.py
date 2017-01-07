@@ -237,48 +237,4 @@ b=modelList[1].predict(S_tot[index[-50:]][:,featureIndex[1]])
 
 
 
-class CRF():
-    
-    def __init__(self,d,k):
-        # d is the dim of X, k is the dim of y
-        self.d = d
-        self.k = k
-        self.W = np.random.randn(d,k)/np.sqrt(d)
-        self.b = np.zeros(k)
-        self.TM = np.random.randn(k,k)/np.sqrt(k) # binary factors
-        self.TMexp = np.exp(self.TM)
-        
-    def factor_eval_XY(self,X,y=None):
-        if y is None:
-            return np.dot(X,self.W)+self.b
-        else:
-            return (np.dot(X,self.W)+self.b)[range(y.shape[0]),y]
-    
-    def forwardBackward(self,X):
 
-        n = X.shape[0]
-        unaryFactor = np.exp(self.factor_eval_XY(X))
-        alpha = np.ones((n,self.k))
-        beta = np.ones((n,self.k))
-        for i in range(1,n): # forward pass
-            alpha[i] = np.dot(alpha[i-1]*unaryFactor[i-1],self.TMexp)
-            alpha[i] = alpha[i]/np.sum(alpha[i]) # local normalize to avoid overflow
-            
-        for i in range(n-2,-1,-1): # backward pass
-            beta[i] = np.dot(self.TMexp,beta[i+1]*unaryFactor[i+1])
-            beta[i] = beta[i]/np.sum(beta[i]) 
-            
-        return alpha,beta,unaryFactor
-    
-    def infer_Y_X(self,X):
-        # calculate p(Y|X), where Y ranges over both time and k classes
-        # needed for SGD model training. Returned value have shape T,K
-        alpha,beta,unaryFactor = self.forwardBackward(X)
-        P_y = alpha*beta*unaryFactor
-        return P_y/np.sum(P_y,1,keepdims=True)
-    
-    def infer_YY_X(self,X):
-        # calculate p(Yt,Yt+1|X). Returned value will have shape T-1,K,K
-        n = X.shape[0]
-        alpha,beta,unaryFactor = self.forwardBackward(X)
-        unaryFactor[:n-1]*alpha[:n-1], unaryFactor[1:]*beta[1:]
