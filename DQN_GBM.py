@@ -1,3 +1,10 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Dec 28 17:19:37 2016
+
+@author: will
+"""
 from sklearn.base import BaseEstimator, ClassifierMixin
 import numpy as np
 from sklearn.cross_validation import KFold
@@ -12,14 +19,14 @@ env = gym.envs.make("Breakout-v0")
 
 k = 4 # 4 possible action 0 (stay), 1 (fire), 2 (right) and 3 (left)
 learning_rate = 1e-2
-depth = 12
-max_features = 0.05
-NbaseLearner = 50
-subfold = 10
+depth = 18
+max_features = 0.01
+NbaseLearner = 100
+subfold = 4
 
 
 sampleSize = 10000 # additional sampling given updated q function
-L,W = 80,80
+L,W = 80,72
 lookback = 3 # how many frames to look back to make state transition markovian
 iter_times = 100 # major loop
 eps = np.linspace(0.5,0.1,iter_times) # epsilon greedy policy
@@ -28,12 +35,12 @@ discount = 0.99
 batchSize = 10000
 trainIterTime = 2 
 featureNumber = L*W*lookback
-featureLowCutoff = 100
+featureLowCutoff = 1
 featureHighCutoff = DataSize - featureLowCutoff
 
-modelNum = 5 # total number of model in modelList
-modelMax = 2 # first modelMax of model in List will be used to figure out the argmax, i.e. best action
-modelUpdateNum = 2 # how many model to update each time                
+modelNum = 3 # total number of model in modelList
+modelMax = 1 # first modelMax of model in List will be used to figure out the argmax, i.e. best action
+modelUpdateNum = 1 # how many model to update each time                
 
 
 
@@ -57,6 +64,8 @@ class GBM(BaseEstimator, ClassifierMixin):
         self.init_ = np.array([np.mean(y[mask==i]) for i in range(k_)])
         yhat = np.broadcast_to(self.init_, (n,k_))[np.arange(n),mask]
         kf = KFold(n, n_folds=self.subFold)
+        err = np.zeros(self.M_est * self.subFold)
+        counter = 0
         for i in range(self.M_est):
             index=np.random.permutation(n) # shuffle index for subsampling
             X,y,yhat,mask = X[index,:],y[index],yhat[index],mask[index]
@@ -67,6 +76,11 @@ class GBM(BaseEstimator, ClassifierMixin):
                 self.estimator_.append(self.BaseEst(**self.BasePara).fit(X[test],target))
                 yhat[train]+=self.learnRate*self.estimator_[-1].\
                                 predict(X[train])[np.arange(train.shape[0]),mask[train]]
+                err[counter] = np.mean(np.abs(y[train]-yhat[train]))/np.mean(np.abs(y[train]-np.mean(y[train])))
+                counter+=1
+        plt.plot(err) # for monitor
+        plt.title(self.subFold)
+        plt.show()
         return self  
           
     def predict(self,X):
@@ -80,10 +94,10 @@ def processImg(img):
     # precess make problem easier for agent by leveraging "human intelligence"
     # such as removing color and bounding box and reducing resolution. This greatly
     # reduce the dimention of this problem. However, this limits the agent's applicability.
-    img = img[35:195] # crop the bounding box
+    img = img[35:195,8:-8] # crop the bounding box
     img = img[::2,::2,0] # downsample
     img[img != 0] = 1 # remove color information
-    return img.astype(np.float).flatten()
+    return img.flatten()
 
 
 def insert_delete(old, new,first_dim):
@@ -105,7 +119,7 @@ modelList = [GBM(DecisionTreeRegressor,NbaseLearner*2,\
             GBM(DecisionTreeRegressor,NbaseLearner/2,\
             learning_rate,{'max_depth':int(depth/1.5),'splitter':'random','max_features':max_features*1.5},subfold*2),\
             GBM(DecisionTreeRegressor,NbaseLearner,\
-            learning_rate,{'max_depth':depth,'splitter':'random','max_features':max_features},subfold),\
+            learning_rate,{'max_depth':depth,'splitter':'random','max_features':max_features},subfold)
             ]
 # TODO add other model class to modelList                
                 
@@ -147,7 +161,8 @@ featureIndex = [(temp>featureLowCutoff) * (temp<featureHighCutoff)]*modelNum
 index = np.random.permutation(DataSize)
 tempBatch = int(DataSize/modelNum)
 for i in range(modelNum):
-    modelList[i].fit(S_tot[index[i*tempBatch:(i+1)*tempBatch]][:,featureIndex[i]],R_tot,A_tot) 
+    modelList[i].fit(S_tot[index[i*tempBatch:(i+1)*tempBatch]][:,featureIndex[i]],\
+                     R_tot[index[i*tempBatch:(i+1)*tempBatch]],A_tot[index[i*tempBatch:(i+1)*tempBatch]]) 
 
 
 
@@ -167,8 +182,8 @@ for iter_ in range(iter_times):
     while counter < sampleSize:
         if done == True:
             s = np.tile(processImg(env.reset()), lookback)
-
-        a = np.argmax(modelList[np.random.randint(modelNum)].predict(np.expand_dims(s[featureIndex[0]],0))) \
+        temp = np.random.randint(modelNum)
+        a = np.argmax(modelList[temp].predict(np.expand_dims(s[featureIndex[temp]],0))) \
                 if np.random.rand() > eps[iter_] else np.random.randint(k) 
         s_next, r, done, _ = env.step(a)
 
@@ -218,7 +233,9 @@ done = True
 for i in range(10000):
     if done:
         s = np.tile(processImg(env.reset()), lookback)
-    a =np.argmax(modelList[0].predict(np.expand_dims(s[featureIndex[0]],0)))
+        #s_next, r, done, _ = env.step(1)
+    a =np.argmax(np.sum([model.predict(np.expand_dims(s[ind_],0)) for model,ind_ in \
+                        zip(modelList,featureIndex)],0)) if np.random.rand() > 0.05 else np.random.randint(k)
     s_next, r, done, _ = env.step(a)
     plt.imshow(s_next[:,:,0])
     plt.show()
@@ -231,10 +248,9 @@ for i in range(100000):
 
 a=modelList[0].predict(S_tot[index[-50:]][:,featureIndex[0]])
 b=modelList[1].predict(S_tot[index[-50:]][:,featureIndex[1]])
-
-
-
-
-
-
-
+c=modelList[2].predict(S_tot[index[-50:]][:,featureIndex[2]])
+# show distribution changes in s
+plt.imshow(np.mean(S_tot[:10000].reshape(10000,lookback,W,L),0)[0])
+plt.show()
+plt.imshow(np.mean(S_tot[-10000:].reshape(10000,lookback,W,L),0)[0])
+plt.show()
